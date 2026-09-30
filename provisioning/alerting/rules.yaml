@@ -1,0 +1,38 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: services
+    folder: Demo
+    interval: 30s
+    rules:
+      - uid: payments-down
+        title: Payments service down
+        condition: C
+        for: 1m
+        labels: { severity: critical, service: payments }
+        annotations: { summary: The payments scrape target is not reachable }
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model: { refId: A, expr: 'up{job="payments"}', instant: true }
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: lt, params: [1] } }] }
+      - uid: span-errors
+        title: Service returning errors
+        condition: C
+        for: 1m
+        labels: { severity: warning }
+        annotations: { summary: A service has server spans with error status }
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (service) (rate(traces_spanmetrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m]))'
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [0] } }] }

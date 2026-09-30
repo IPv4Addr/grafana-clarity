@@ -1,0 +1,3 @@
+apiVersion: 1
+providers:
+  - { name: demo, folder: Demo, type: file, options: { path: /etc/grafana/provisioning/dashboards } }

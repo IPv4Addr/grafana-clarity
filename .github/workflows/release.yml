@@ -1,0 +1,40 @@
+# Pushing a vX.Y.Z tag (matching the version in package.json) builds, signs and packages the plugin, and publishes a
+# GitHub release with ipv4addr-clarity-app-X.Y.Z.zip and its .sha1: the files the Grafana plugin catalog submission
+# asks for, and what `grafana cli --pluginUrl` installs from.
+# https://grafana.com/developers/plugin-tools/publish-a-plugin/build-automation
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: read-all
+
+jobs:
+  release:
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: grafana/plugin-actions/build-plugin@build-plugin/v1.2.0
+        with:
+          # Grafana Cloud access policy token of the "ipv4addr" org (scope plugins:write), saved as a repository secret.
+          # Leave it unset until the plugin is approved: the first catalog submission is reviewed unsigned.
+          policy_token: ${{ secrets.GRAFANA_ACCESS_POLICY_TOKEN }}
+          attestation: true
+          node-version: '24' # as in .nvmrc
+
+      # build-plugin leaves a draft, whose files cannot be downloaded: publish it, with the version's CHANGELOG entry
+      - name: Publish the release
+        run: |
+          awk '/^## / {s++} s == 1 {print}' CHANGELOG.md > release-notes.md
+          gh release edit "$GITHUB_REF_NAME" --draft=false --notes-file release-notes.md --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}

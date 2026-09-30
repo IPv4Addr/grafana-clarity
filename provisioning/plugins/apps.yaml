@@ -1,0 +1,9 @@
+# Only enables Clarity (plugin id ipv4addr-clarity-app), which has no settings of its own. The model (provider, URL,
+# key, base/large mapping) is set up in Grafana's LLM app (grafana-llm-app, preinstalled by docker-compose.yaml) at
+# /plugins/grafana-llm-app. Not provisioned here: that would overwrite what was set in the UI on every Grafana start.
+# README.md shows how to provision it.
+apiVersion: 1
+apps:
+  - type: ipv4addr-clarity-app
+    org_id: 1
+    disabled: false

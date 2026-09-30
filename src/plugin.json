@@ -1,0 +1,61 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "app",
+  "name": "Clarity",
+  "id": "ipv4addr-clarity-app",
+  "info": {
+    "keywords": ["ai", "llm", "assistant", "observability", "on-prem", "openai", "anthropic", "ollama", "openrouter"],
+    "description": "On-prem AI assistant for your metrics, logs, traces and alerts. Ask in plain language: the model you set up in the Grafana LLM app (OpenAI, Anthropic, or an OpenAI-compatible API such as Ollama or OpenRouter) runs the queries with your permissions and shows the results inline.",
+    "author": {
+      "name": "Stijn Timmer",
+      "url": "https://github.com/IPv4Addr"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "links": [
+      {
+        "name": "GitHub",
+        "url": "https://github.com/IPv4Addr/grafana-clarity"
+      },
+      {
+        "name": "Report a bug",
+        "url": "https://github.com/IPv4Addr/grafana-clarity/issues"
+      }
+    ],
+    "screenshots": [],
+    "version": "%VERSION%",
+    "updated": "%TODAY%"
+  },
+  "includes": [
+    {
+      "type": "page",
+      "name": "Clarity",
+      "path": "/a/%PLUGIN_ID%",
+      "icon": "ai-sparkle",
+      "addToNav": true,
+      "defaultNav": true
+    }
+  ],
+  "extensions": {
+    "addedLinks": [
+      {
+        "targets": ["grafana/dashboard/panel/menu"],
+        "title": "Ask Clarity",
+        "description": "Explain this panel and check it for problems"
+      }
+    ]
+  },
+  "dependencies": {
+    "grafanaDependency": ">=13.2.0",
+    "plugins": [
+      {
+        "id": "grafana-llm-app",
+        "type": "app",
+        "name": "LLM",
+        "version": ">=1.0.0"
+      }
+    ]
+  }
+}

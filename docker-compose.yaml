@@ -1,0 +1,147 @@
+# Dev environment for Clarity: Grafana 13.2.2 with the plugin mounted from ./dist and Grafana's LLM app, plus
+# Prometheus, Loki and Tempo filled by the HotROD demo app (4 services) so there is something to ask questions about.
+#   npm run build && docker compose up -d   ->   set up the provider, key and models in the LLM app at
+#   http://localhost:3000/plugins/grafana-llm-app, then open Clarity (More apps -> Clarity).
+# Optional profiles (add to the command above):
+#   --profile ollama   local models: the LLM app's Custom API at http://ollama:11434 (it appends /v1)
+#                      (then: docker compose exec ollama ollama pull <model>)
+#   --profile e2e      the scripted LLM mock the Playwright tests point the LLM app at
+services:
+  grafana:
+    extends:
+      file: .config/docker-compose-base.yaml
+      service: grafana
+    build:
+      args:
+        grafana_image: ${GRAFANA_IMAGE:-grafana}
+        grafana_version: ${GRAFANA_VERSION:-13.2.2}
+    # .config/ was generated for the plugin's earlier id: container name, plugin mount and log filter use the current one
+    container_name: clarity-grafana
+    ports: !override
+      - 127.0.0.1:3000:3000/tcp
+    volumes: !override
+      - ./dist:/var/lib/grafana/plugins/ipv4addr-clarity-app
+      - ./provisioning:/etc/grafana/provisioning
+      - grafana-data:/var/lib/grafana # keeps the LLM app and its settings (API key!) when the container is recreated
+    environment:
+      GF_LOG_FILTERS: plugin.ipv4addr-clarity-app:debug
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: ipv4addr-clarity-app
+      GF_PLUGINS_PREINSTALL_SYNC: grafana-llm-app@1.1.0 # model access: Clarity calls the LLM through Grafana's LLM app
+      GF_DATAPROXY_LOGGING: 0 # data proxy request logging; prompts go through the LLM app (logged there only at debug)
+      GF_SERVER_ENFORCE_DOMAIN: 'true' # anonymous admin + a real key: refuse foreign Host headers (DNS rebinding)
+    extra_hosts: ['host.docker.internal:host-gateway'] # an Ollama running on the host (Linux; Docker Desktop has it)
+    depends_on: [prometheus, loki, tempo]
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver
+      - --enable-feature=exemplar-storage
+    configs:
+      - { source: prometheus, target: /etc/prometheus/prometheus.yml }
+      - { source: prometheus-rules, target: /etc/prometheus/rules.yml }
+
+  loki:
+    image: grafana/loki:3.7.8
+
+  tempo:
+    image: grafana/tempo:2.8.2
+    command: [-config.file=/etc/tempo.yaml]
+    configs: [{ source: tempo, target: /etc/tempo.yaml }]
+
+  alloy: # ships the containers' logs to Loki
+    image: grafana/alloy:v1.12.1
+    command: [run, /etc/alloy/config.alloy]
+    configs: [{ source: alloy, target: /etc/alloy/config.alloy }]
+    volumes: [/var/run/docker.sock:/var/run/docker.sock:ro]
+
+  hotrod:
+    image: jaegertracing/example-hotrod:latest
+    command: [all, --otel-exporter=otlp]
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+
+  load:
+    image: busybox:latest
+    command:
+      - sh
+      - -c
+      - 'while true; do for c in 123 392 567 731; do wget -q -O /dev/null "http://hotrod:8080/dispatch?customer=$$c&nonse=0.1"; done; sleep 2; done'
+    depends_on: [hotrod]
+
+  ollama: # CPU only; for a GPU, run Ollama on the host and use http://host.docker.internal:11434
+    profiles: [ollama]
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_CONTEXT_LENGTH: 32768 # the system prompt, tools and results need more than the default window
+    volumes: [ollama-models:/root/.ollama] # pulled models survive recreating the container
+
+  mock-llm:
+    profiles: [e2e]
+    image: node:22-alpine
+    command: [node, /mock.mjs]
+    volumes: [./tests/mock-llm.mjs:/mock.mjs:ro]
+    ports: [127.0.0.1:3099:8080]
+
+volumes:
+  grafana-data:
+  ollama-models:
+
+configs:
+  prometheus:
+    content: |
+      global: { scrape_interval: 15s }
+      rule_files: [/etc/prometheus/rules.yml]
+      scrape_configs:
+        - { job_name: prometheus, static_configs: [{ targets: ['localhost:9090'] }] }
+        - { job_name: hotrod, static_configs: [{ targets: ['hotrod:8080'] }] }
+        - { job_name: tempo, static_configs: [{ targets: ['tempo:3200'] }] }
+        - { job_name: loki, static_configs: [{ targets: ['loki:3100'] }] }
+        # deliberately unreachable: "is payments running?" has an answer and an alert fires
+        - { job_name: payments, static_configs: [{ targets: ['payments:9100'] }] }
+  prometheus-rules: # a datasource-managed (ruler) alert, next to the Grafana-managed ones in provisioning/alerting
+    content: |
+      groups:
+        - name: hotrod
+          rules:
+            - alert: HotRODRedisErrors
+              expr: sum by (service) (rate(traces_spanmetrics_calls_total{service="redis-manual", status_code="STATUS_CODE_ERROR"}[5m])) > 0
+              labels: { severity: warning }
+              annotations: { summary: redis-manual spans are failing }
+  tempo:
+    content: |
+      server: { http_listen_port: 3200 }
+      distributor:
+        receivers: { otlp: { protocols: { grpc: { endpoint: 0.0.0.0:4317 }, http: { endpoint: 0.0.0.0:4318 } } } }
+      storage:
+        trace: { backend: local, wal: { path: /var/tempo/wal }, local: { path: /var/tempo/blocks } }
+      metrics_generator:
+        storage:
+          path: /var/tempo/generator/wal
+          remote_write: [{ url: 'http://prometheus:9090/api/v1/write', send_exemplars: true }]
+        traces_storage: { path: /var/tempo/generator/traces }
+      overrides:
+        defaults: { metrics_generator: { processors: [service-graphs, span-metrics, local-blocks] } }
+  alloy:
+    content: |
+      discovery.docker "c" { host = "unix:///var/run/docker.sock" }
+      discovery.relabel "c" {
+        targets = discovery.docker.c.targets
+        rule {
+          source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+          regex         = "${COMPOSE_PROJECT_NAME}"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+          target_label  = "service_name"
+        }
+      }
+      loki.source.docker "c" {
+        host          = "unix:///var/run/docker.sock"
+        targets       = discovery.relabel.c.output
+        relabel_rules = discovery.relabel.c.rules
+        forward_to    = [loki.write.l.receiver]
+      }
+      loki.write "l" { endpoint { url = "http://loki:3100/loki/api/v1/push" } }
