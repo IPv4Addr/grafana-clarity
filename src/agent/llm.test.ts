@@ -286,6 +286,31 @@ describe('ask', () => {
     expect(grafana.live.streams[0].observed).toBe(false);
   });
 
+  it("resends with reasoning_effort 'none' when OpenAI asks for it, and keeps sending it", async () => {
+    // a freshly loaded llm.ts: it remembers this for the rest of the page load
+    let llm!: typeof import('./llm');
+    await jest.isolateModulesAsync(async () => {
+      llm = await import('./llm');
+    });
+    const error =
+      'establish chat completions stream: error, status code: 400, status: 400 Bad Request, message: Function tools ' +
+      'with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions. To use function tools, use ' +
+      "/v1/responses or set reasoning_effort to 'none'.";
+    const ui = fakeUI();
+    const run = llm.ask([], 'q', ui, new AbortController().signal);
+    const first = await reply(0, [...connected, message({ error })]);
+    const second = await reply(1, answer('Hi.'));
+    await expect(run).resolves.toBeUndefined();
+    expect(first.data.reasoning_effort).toBeUndefined();
+    expect(second.data.reasoning_effort).toBe('none');
+    expect(ui.text.mock.calls).toEqual([['Hi.']]);
+
+    const next = llm.ask([], 'q', ui, new AbortController().signal);
+    expect((await reply(2, [...connected, message({ error })])).data.reasoning_effort).toBe('none');
+    await expect(next).rejects.toEqual(new Error(error)); // asked once only
+    expect(grafana.live.streams).toHaveLength(3);
+  });
+
   it('rejects when the channel reports an error', async () => {
     const { run } = start('q');
     await reply(0, [status(LiveChannelConnectionState.Connecting, 'permission denied')]);

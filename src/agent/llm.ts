@@ -202,6 +202,24 @@ const complete = (request: object, ui: AgentUI, signal: AbortSignal) =>
     }
   });
 
+// OpenAI's newer models take function tools on Chat Completions only with reasoning_effort 'none', and older ones
+// reject that parameter: it is sent once the provider asks for it, for the rest of the page load.
+let noReasoning = false;
+
+/** A model call with the tools, on "large": the LLM app maps it to the provider's bigger model. */
+const completeLarge = async (history: Message[], ui: AgentUI, signal: AbortSignal): Promise<Completion> => {
+  const request = { model: 'large', messages: history, tools: TOOLS, stream_options: { include_usage: true } };
+  try {
+    return await complete(noReasoning ? { ...request, reasoning_effort: 'none' } : request, ui, signal);
+  } catch (e) {
+    if (noReasoning || !(e instanceof Error && /reasoning_effort to '?none/.test(e.message))) {
+      throw e;
+    }
+    noReasoning = true; // rejected before anything streamed: nothing to take back in the chat
+    return completeLarge(history, ui, signal);
+  }
+};
+
 const parseArgs = (json: string): unknown => {
   try {
     return json ? JSON.parse(json) : {};
@@ -251,12 +269,7 @@ export const ask = async (
   history.push({ role: 'user', content: `<context>\n${context()}\n</context>\n\n${question}` });
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const { content, refusal, toolCalls, finish } = await complete(
-      // "large": the LLM app maps it to the provider's bigger model
-      { model: 'large', messages: history, tools: TOOLS, stream_options: { include_usage: true } },
-      ui,
-      signal
-    );
+    const { content, refusal, toolCalls, finish } = await completeLarge(history, ui, signal);
     if (refusal || finish === 'content_filter') {
       history.length = mark; // don't send the declined question again with every follow-up
       return { text: refusal || 'The model declined this request (content filter).', resumable: false };
