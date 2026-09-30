@@ -24,7 +24,16 @@
         "url": "https://github.com/IPv4Addr/grafana-clarity/issues"
       }
     ],
-    "screenshots": [],
+    "screenshots": [
+      {
+        "name": "An investigation: firing alerts and a PromQL query, shown inline as Grafana panels",
+        "path": "img/screenshot-investigation.png"
+      },
+      {
+        "name": "A trace the model looked at, in Grafana's trace view",
+        "path": "img/screenshot-trace.png"
+      }
+    ],
     "version": "%VERSION%",
     "updated": "%TODAY%"
   },

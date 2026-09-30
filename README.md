@@ -67,6 +67,20 @@ Open the LLM app (`/plugins/grafana-llm-app`), choose the provider, enter the UR
 - **Everyone who can sign in spends the LLM app's key.** Use a key with a spending limit.
 - **Prompt injection:** logs and labels can contain text aimed at the model. The tools only read, and answers cannot load images or other remote content.
 
+## Planned
+
+Not there yet, and in no particular order:
+
+- **Profiling:** Pyroscope. The model picks the profile type and labels, finds the functions that use the most CPU or memory, and shows them as a Grafana flame graph. From a slow trace span it can go on to that span's profile.
+- **More datasources:**
+  - logs: Elasticsearch and OpenSearch
+  - metrics: InfluxDB and Graphite
+  - SQL: PostgreSQL, MySQL, Microsoft SQL Server and ClickHouse
+  - cloud: Amazon CloudWatch, Azure Monitor and Google Cloud Monitoring
+  - traces: Jaeger and Zipkin
+
+  They'll work like the ones supported today: queries only read, run as the signed-in user, and show up as Grafana panels.
+
 ## Development
 
 ```bash
