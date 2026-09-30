@@ -1,0 +1,62 @@
+# Checks every push to main and every pull request, and keeps the built plugin as a downloadable artifact
+# (ipv4addr-clarity-app-<version>, unsigned unless the signing token is set). Follows create-plugin's CI workflow.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, lint and unit tests
+    runs-on: ubuntu-latest
+    env:
+      GRAFANA_ACCESS_POLICY_TOKEN: ${{ secrets.GRAFANA_ACCESS_POLICY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:ci
+      - run: npm run build
+
+      - name: Sign plugin
+        if: ${{ env.GRAFANA_ACCESS_POLICY_TOKEN != '' }}
+        run: npm run sign
+
+      # the layout Grafana installs from: a folder named after the plugin id
+      - name: Package plugin
+        id: package
+        run: |
+          id=$(jq -r .id dist/plugin.json)
+          version=$(jq -r .info.version dist/plugin.json)
+          mv dist "$id"
+          zip -qr "$id-$version.zip" "$id"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "name=$id-$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check plugin.json
+        run: docker run --rm --pull=always -v "$PWD/$NAME.zip:/archive.zip" grafana/plugin-validator-cli -analyzer=metadatavalid /archive.zip
+        env:
+          NAME: ${{ steps.package.outputs.name }}
+
+      - name: Upload the build
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.id }}
+          retention-days: 14
+
+      # The Playwright e2e tests (npm run e2e) are not run here: they need the docker compose stack with the demo data
+      # and the mock LLM (see README.md).

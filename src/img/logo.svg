@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Clarity</title>
+  <line x1="3" y1="38" x2="22.8" y2="31" stroke="#8B95A5" stroke-width="3.5"/>
+  <g stroke-width="3.5">
+    <line x1="41.2" y1="31" x2="61" y2="18" stroke="#F2495C"/>
+    <line x1="41.2" y1="31" x2="62" y2="31" stroke="#FADE2A"/>
+    <line x1="41.2" y1="31" x2="61" y2="44" stroke="#5794F2"/>
+  </g>
+  <path d="M32 11 L50 50 L14 50 Z" fill="none" stroke="#B4C0D3" stroke-width="3" stroke-linejoin="round"/>
+</svg>

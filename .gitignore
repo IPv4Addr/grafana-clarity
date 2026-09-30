@@ -1,0 +1,34 @@
+# Dependencies (package-lock.json is tracked)
+node_modules/
+
+# Build and test output
+dist/
+coverage/
+*.tsbuildinfo
+.eslintcache
+
+# Playwright (.auth holds Grafana session cookies)
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+
+# Logs
+logs/
+*.log
+
+# Local environment and secrets
+.env
+.env.*
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# AI assistant files that stay local
+CLAUDE.md
+.claude/
+graphify-out/
