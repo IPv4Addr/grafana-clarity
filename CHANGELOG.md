@@ -4,6 +4,7 @@
 
 - Profiles from Pyroscope. The model finds the profile types and services, names the functions that use the most CPU, memory or lock time, and shows the profile as a Grafana flame graph. A trace lists its spans that have a span profile, so the model can go from a slow span to the CPU profile of just that span.
 - The dev stack has Pyroscope, with CPU and memory profiles of Prometheus, Loki, Tempo and Alloy.
+- Updated dependencies, build tooling (create-plugin 7.17, Jest 30, TypeScript 6) and the dev stack (Grafana 13.3, Tempo 3, LLM app 1.2), and fixed the vulnerable packages npm audit reported.
 
 ## 1.0.0
 
