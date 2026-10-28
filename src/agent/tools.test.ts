@@ -590,6 +590,110 @@ describe('get_trace', () => {
   });
 });
 
+describe('list_pyroscope_labels', () => {
+  const RESOURCES = '/api/datasources/uid/pyroscope/resources';
+  const CPU = 'process_cpu:cpu:nanoseconds:cpu:nanoseconds';
+
+  it('lists the profile types that have data and the label names, in milliseconds', async () => {
+    grafana.backend.get.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.endsWith('/labelNames') ? ['service_name', 'instance'] : [CPU, 'memory:alloc_space:bytes:space:bytes']
+      )
+    );
+    const out = await run('list_pyroscope_labels', { datasourceUid: 'pyroscope', start: 'now-1h', end: 'now' });
+    const range = { start: NOW - HOUR, end: NOW };
+    // labelNames fails without a selector
+    expect(grafana.backend.get.mock.calls.map(([url, params]) => [url, params])).toEqual([
+      [`${RESOURCES}/labelValues`, { query: '{}', ...range, label: '__profile_type__' }],
+      [`${RESOURCES}/labelNames`, { query: '{}', ...range }],
+    ]);
+    expect(out).toEqual({
+      forModel: `Profile types: 2 values: memory:alloc_space:bytes:space:bytes, ${CPU}\nLabel names: 2 values: instance, service_name`,
+    });
+  });
+
+  it('lists the values of a label for a selector', async () => {
+    grafana.backend.get.mockResolvedValue(['tempo', 'loki']);
+    const out = await run('list_pyroscope_labels', {
+      datasourceUid: 'pyroscope',
+      label: 'service_name',
+      match: '{namespace="obs"}',
+    });
+    const { url, params } = sentGet();
+    expect(url).toBe(`${RESOURCES}/labelValues`);
+    expect(params).toMatchObject({ query: '{namespace="obs"}', label: 'service_name' });
+    expect(out.forModel).toBe('Values of service_name: 2 values: loki, tempo');
+  });
+});
+
+describe('query_profile', () => {
+  const CPU = 'process_cpu:cpu:nanoseconds:cpu:nanoseconds';
+  const input = { datasourceUid: 'pyroscope', profileType: CPU, labelSelector: '{service_name="tempo"}' };
+  const query = { queryType: 'profile', profileTypeId: CPU, labelSelector: '{service_name="tempo"}', groupBy: [] };
+  // the shape Pyroscope's datasource returns
+  const flamegraph = createDataFrame({
+    name: 'response',
+    refId: 'A',
+    meta: { preferredVisualisationType: 'flamegraph' },
+    fields: [
+      { name: 'level', type: FieldType.number, values: [0, 1] },
+      { name: 'value', type: FieldType.number, values: [2e9, 2e9], config: { unit: 'ns' } },
+      { name: 'self', type: FieldType.number, values: [0, 2e9], config: { unit: 'ns' } },
+      {
+        name: 'label',
+        type: FieldType.enum,
+        values: [0, 1],
+        config: { type: { enum: { text: ['total', 'compress/flate.(*compressor).deflate'] } } },
+      },
+    ],
+  });
+
+  it('fetches the profile and shows it as a flame graph', async () => {
+    respond(flamegraph);
+    const out = await run('query_profile', { ...input, start: 'now-1h', end: 'now' });
+
+    expect(sentQuery()).toEqual({
+      from: NOW - HOUR,
+      to: NOW,
+      query: { refId: 'A', datasource: { type: 'grafana-pyroscope-datasource', uid: 'pyroscope' }, ...query },
+    });
+    expect(out.forModel).toBe(
+      [
+        RANGE,
+        'Total 2 s over the time range.',
+        'Most self (spent in the function itself):',
+        '2 s (100%) compress/flate.(*compressor).deflate',
+        'Most total (including the functions it calls):',
+        '2 s (100%) compress/flate.(*compressor).deflate',
+      ].join('\n')
+    );
+    const { frames, explore, ...view } = out.view!;
+    expect(view).toMatchObject({ panel: 'flamegraph', height: 460 });
+    expect(frames).toEqual([flamegraph]);
+    expect(explorePane(explore).queries).toEqual([
+      { refId: 'A', datasource: { type: 'grafana-pyroscope-datasource', uid: 'pyroscope' }, ...query },
+    ]);
+  });
+
+  it.each([
+    ['a list', ['a1b2', '', 'c3d4'], ['a1b2', 'c3d4']],
+    ['one id', 'a1b2', ['a1b2']],
+  ])('selects the trace spans given as %s', async (_, spanIds, spanSelector) => {
+    respond(flamegraph);
+    await run('query_profile', { ...input, spanIds });
+    expect(sentQuery().query).toMatchObject({ ...query, spanSelector });
+  });
+
+  it('selects every series without a label selector, and says when the profile is empty', async () => {
+    respond();
+    const out = await run('query_profile', { datasourceUid: 'pyroscope', profileType: CPU });
+    const sent = sentQuery().query;
+    expect(sent.labelSelector).toBe('{}');
+    expect(sent).not.toHaveProperty('spanSelector');
+    expect(out.forModel).toMatch(/^Time range .*\nNo profile data\./);
+  });
+});
+
 describe('get_alerts', () => {
   const GRAFANA = '/api/prometheus/grafana/api/v1/rules';
   const PROMETHEUS = '/api/prometheus/prometheus/api/v1/rules';
@@ -938,6 +1042,26 @@ describe('describeCall', () => {
     ['list_loki_labels', { datasourceUid: 'loki' }, { title: 'Label names · Loki', code: undefined }],
     ['search_traces', { datasourceUid: 'tempo', traceql: '{}' }, { title: 'TraceQL · Tempo', code: '{}' }],
     ['get_trace', { datasourceUid: 'tempo', traceId: 'abc' }, { title: 'Trace · Tempo', code: 'abc' }],
+    [
+      'list_pyroscope_labels',
+      { datasourceUid: 'pyroscope', match: '{service_name="api"}' },
+      { title: 'Profile types and label names · Pyroscope', code: '{service_name="api"}' },
+    ],
+    [
+      'list_pyroscope_labels',
+      { datasourceUid: 'pyroscope', label: 'service_name' },
+      { title: 'Values of service_name · Pyroscope', code: undefined },
+    ],
+    [
+      'query_profile',
+      { datasourceUid: 'pyroscope', profileType: 'memory:alloc_space:bytes:space:bytes', labelSelector: '{a="b"}' },
+      { title: 'Profile · Pyroscope', code: 'memory:alloc_space:bytes:space:bytes{a="b"}' },
+    ],
+    [
+      'query_profile',
+      { datasourceUid: 'pyroscope', profileType: 'process_cpu:cpu:nanoseconds:cpu:nanoseconds', spanIds: ['a1'] },
+      { title: 'Span profile · Pyroscope', code: 'process_cpu:cpu:nanoseconds:cpu:nanoseconds{}' },
+    ],
     ['some_new_tool', {}, { title: 'some_new_tool' }],
   ])('%s %j', (name, input, expected) => {
     expect(describeCall(name, input)).toEqual(expected);

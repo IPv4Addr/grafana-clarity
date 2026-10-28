@@ -5,7 +5,7 @@
   "id": "ipv4addr-clarity-app",
   "info": {
     "keywords": ["ai", "llm", "assistant", "observability", "on-prem", "openai", "anthropic", "ollama", "openrouter"],
-    "description": "On-prem AI assistant for your metrics, logs, traces and alerts. Ask in plain language: the model you set up in the Grafana LLM app (OpenAI, Anthropic, or an OpenAI-compatible API such as Ollama or OpenRouter) runs the queries with your permissions and shows the results inline.",
+    "description": "On-prem AI assistant for your metrics, logs, traces, profiles and alerts. Ask in plain language: the model you set up in the Grafana LLM app (OpenAI, Anthropic, or an OpenAI-compatible API such as Ollama or OpenRouter) runs the queries with your permissions and shows the results inline.",
     "author": {
       "name": "Stijn Timmer",
       "url": "https://github.com/IPv4Addr"

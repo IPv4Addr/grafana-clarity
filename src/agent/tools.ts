@@ -16,14 +16,21 @@ import {
 import { getBackendSrv, getDataSourceSrv, hasPermission } from '@grafana/runtime';
 import { from, fromEvent, lastValueFrom, takeUntil } from 'rxjs';
 import pluginJson from '../plugin.json';
-import { summarizeInstant, summarizeLogs, summarizeSeries, summarizeTrace, summarizeTraceSearch } from './summarize';
+import {
+  summarizeInstant,
+  summarizeLogs,
+  summarizeProfile,
+  summarizeSeries,
+  summarizeTrace,
+  summarizeTraceSearch,
+} from './summarize';
 
 // Every tool runs in the browser through Grafana's HTTP API as the logged-in user, so Grafana RBAC applies.
 // The model gets compact text (forModel); the frames stay here and are rendered as native panels (view).
 
 /** How the chat renders a tool result: a native Grafana panel, plus a link to the query in Explore. */
 export interface ToolView {
-  panel: 'timeseries' | 'table' | 'logs' | 'traces' | 'bargauge';
+  panel: 'timeseries' | 'table' | 'logs' | 'traces' | 'bargauge' | 'flamegraph';
   frames: DataFrame[];
   timeRange: TimeRange;
   height: number;
@@ -450,6 +457,45 @@ const getTrace = async (input: Input, signal: AbortSignal): Promise<ToolOutcome>
   };
 };
 
+const PYROSCOPE = 'grafana-pyroscope-datasource';
+
+const listPyroscopeLabels = async (input: Input, signal: AbortSignal): Promise<ToolOutcome> => {
+  const ds = datasource(input.datasourceUid, PYROSCOPE);
+  const tr = timeRange(input.start, input.end);
+  const label = str(input.label);
+  // in milliseconds; labelNames fails without a selector
+  const params = { query: str(input.match) ?? '{}', start: tr.from.valueOf(), end: tr.to.valueOf() };
+  const values = (name: string) => resource<string[]>(ds, 'labelValues', { ...params, label: name }, signal);
+  if (label) {
+    return { forModel: `Values of ${label}: ${listValues((await values(label)) ?? [])}` };
+  }
+  // the profile types that have data for the selector (the profileTypes resource lists all of them)
+  const [types, names] = await Promise.all([
+    values('__profile_type__'),
+    resource<string[]>(ds, 'labelNames', params, signal),
+  ]);
+  return { forModel: `Profile types: ${listValues(types ?? [])}\nLabel names: ${listValues(names ?? [])}` };
+};
+
+const queryProfile = async (input: Input, signal: AbortSignal): Promise<ToolOutcome> => {
+  const ds = datasource(input.datasourceUid, PYROSCOPE);
+  const tr = timeRange(input.start, input.end);
+  const spanIds = [input.spanIds ?? []].flat().filter((id) => str(id));
+  // only the flame graph: outside Explore the datasource turns "both" into "profile" anyway
+  const query = {
+    queryType: 'profile',
+    profileTypeId: String(input.profileType),
+    labelSelector: str(input.labelSelector) ?? '{}',
+    groupBy: [],
+    ...(spanIds.length ? { spanSelector: spanIds } : {}),
+  };
+  const frames = await dsQuery(ds, query, tr, signal);
+  return {
+    forModel: `${rangeText(tr)}\n${summarizeProfile(frames)}`,
+    view: { panel: 'flamegraph', frames, timeRange: tr, height: 460, explore: exploreUrl(ds, query, tr) },
+  };
+};
+
 // ---------- definitions (fixed order: they are part of the cached prompt prefix) ----------
 
 const time = {
@@ -582,12 +628,49 @@ const DEFINITIONS: Array<Tool['function']> = [
     name: 'get_trace',
     description:
       'Fetch one trace by id and summarize it: services involved with span and error counts, the root span and total duration, error ' +
-      'spans with their status message, and the spans with the most self time (the real bottleneck, not just the longest parent). ' +
-      'The user sees the full trace in the trace view.',
+      'spans with their status message, the spans with the most self time (the real bottleneck, not just the longest parent), and ' +
+      'the spans that have a CPU profile (for query_profile spanIds). The user sees the full trace in the trace view.',
     parameters: schema({ datasourceUid: dsUid('tempo'), traceId: { type: 'string', description: 'Hex trace id' } }, [
       'datasourceUid',
       'traceId',
     ]),
+  },
+  {
+    name: 'list_pyroscope_labels',
+    description:
+      'Discover what Pyroscope has before querying profiles. Without label: the profile type ids that have data (for query_profile) ' +
+      'and the label names. With label: its values, e.g. label "service_name" lists the profiled services. match is an optional ' +
+      'label selector to narrow the result, e.g. {service_name="api"} for the profile types of one service.',
+    parameters: schema(
+      {
+        datasourceUid: dsUid(PYROSCOPE),
+        label: { type: 'string', description: 'Label to list values of; omit to list profile types and label names' },
+        match: { type: 'string', description: 'Label selector, e.g. {service_name="api"}' },
+        ...time,
+      },
+      ['datasourceUid', 'start', 'end']
+    ),
+  },
+  {
+    name: 'query_profile',
+    description:
+      'Fetch a Pyroscope profile, aggregated over the time range, and summarize it: the total and the functions with the most self ' +
+      '(spent in the function itself) and total (including what it calls). The user sees it as a flame graph. Use it to find the ' +
+      'code that uses the CPU or memory of a service, e.g. profileType process_cpu:cpu:nanoseconds:cpu:nanoseconds for CPU time, ' +
+      'memory:alloc_space:bytes:space:bytes for allocations, memory:inuse_space:bytes:space:bytes for memory in use (leaks), ' +
+      'mutex:delay:nanoseconds:contentions:count for lock contention; the ids depend on the SDK, so take them from ' +
+      'list_pyroscope_labels. Compare two time ranges to see what changed. With spanIds (the profile ids get_trace lists), only ' +
+      'the CPU time of those trace spans, from about a minute before the trace to a minute after it.',
+    parameters: schema(
+      {
+        datasourceUid: dsUid(PYROSCOPE),
+        profileType: { type: 'string', description: 'Profile type id from list_pyroscope_labels' },
+        labelSelector: { type: 'string', description: 'Label selector, e.g. {service_name="api"}' },
+        spanIds: { type: 'array', items: { type: 'string' }, description: 'Profile ids of trace spans (optional)' },
+        ...time,
+      },
+      ['datasourceUid', 'profileType', 'labelSelector', 'start', 'end']
+    ),
   },
 ];
 
@@ -602,6 +685,8 @@ const RUN: Record<string, (input: Input, signal: AbortSignal) => Promise<ToolOut
   list_loki_labels: listLokiLabels,
   search_traces: searchTraces,
   get_trace: getTrace,
+  list_pyroscope_labels: listPyroscopeLabels,
+  query_profile: queryProfile,
 };
 
 /** Runs a tool call from the model. Rejects with the reason on bad input, a failed query or an unknown tool. */
@@ -630,6 +715,17 @@ export const describeCall = (name: string, input: Input): { title: string; code?
       return { title: `TraceQL${on}`, code: String(input.traceql ?? '') };
     case 'get_trace':
       return { title: `Trace${on}`, code: String(input.traceId ?? '') };
+    case 'query_profile':
+      // Pyroscope's own query notation: the profile type followed by the selector
+      return {
+        title: `${input.spanIds ? 'Span profile' : 'Profile'}${on}`,
+        code: `${input.profileType ?? ''}${input.labelSelector ?? '{}'}`,
+      };
+    case 'list_pyroscope_labels':
+      if (!input.label) {
+        return { title: `Profile types and label names${on}`, code: str(input.match) };
+      }
+    // falls through
     case 'list_prometheus_labels':
     case 'list_loki_labels':
       return {

@@ -1,5 +1,6 @@
 # Dev environment for Clarity: Grafana 13.2.2 with the plugin mounted from ./dist and Grafana's LLM app, plus
-# Prometheus, Loki and Tempo filled by the HotROD demo app (4 services) so there is something to ask questions about.
+# Prometheus, Loki and Tempo filled by the HotROD demo app (4 services) so there is something to ask questions about,
+# and Pyroscope with CPU and memory profiles of Prometheus, Loki, Tempo and Alloy (HotROD has no pprof endpoints).
 #   npm run build && docker compose up -d   ->   set up the provider, key and models in the LLM app at
 #   http://localhost:3000/plugins/grafana-llm-app, then open Clarity (More apps -> Clarity).
 # Optional profiles (add to the command above):
@@ -30,7 +31,7 @@ services:
       GF_DATAPROXY_LOGGING: 0 # data proxy request logging; prompts go through the LLM app (logged there only at debug)
       GF_SERVER_ENFORCE_DOMAIN: 'true' # anonymous admin + a real key: refuse foreign Host headers (DNS rebinding)
     extra_hosts: ['host.docker.internal:host-gateway'] # an Ollama running on the host (Linux; Docker Desktop has it)
-    depends_on: [prometheus, loki, tempo]
+    depends_on: [prometheus, loki, tempo, pyroscope]
 
   prometheus:
     image: prom/prometheus:latest
@@ -50,7 +51,10 @@ services:
     command: [-config.file=/etc/tempo.yaml]
     configs: [{ source: tempo, target: /etc/tempo.yaml }]
 
-  alloy: # ships the containers' logs to Loki
+  pyroscope:
+    image: grafana/pyroscope:2.4.2
+
+  alloy: # ships the containers' logs to Loki and the Go services' pprof profiles to Pyroscope
     image: grafana/alloy:v1.12.1
     command: [run, /etc/alloy/config.alloy]
     configs: [{ source: alloy, target: /etc/alloy/config.alloy }]
@@ -145,3 +149,13 @@ configs:
         forward_to    = [loki.write.l.receiver]
       }
       loki.write "l" { endpoint { url = "http://loki:3100/loki/api/v1/push" } }
+      pyroscope.scrape "go" {
+        targets = [
+          { "__address__" = "prometheus:9090", "service_name" = "prometheus" },
+          { "__address__" = "loki:3100", "service_name" = "loki" },
+          { "__address__" = "tempo:3200", "service_name" = "tempo" },
+          { "__address__" = "localhost:12345", "service_name" = "alloy" },
+        ]
+        forward_to = [pyroscope.write.p.receiver]
+      }
+      pyroscope.write "p" { endpoint { url = "http://pyroscope:4040" } }
