@@ -1,5 +1,12 @@
 import { FieldType, createDataFrame } from '@grafana/data';
-import { summarizeInstant, summarizeLogs, summarizeSeries, summarizeTrace, summarizeTraceSearch } from './summarize';
+import {
+  summarizeInstant,
+  summarizeLogs,
+  summarizeProfile,
+  summarizeSeries,
+  summarizeTrace,
+  summarizeTraceSearch,
+} from './summarize';
 
 const series = (labels: Record<string, string>, values: Array<number | null>) =>
   createDataFrame({
@@ -39,6 +46,13 @@ describe('summarize', () => {
     expect(summarizeTraceSearch([createDataFrame({ fields: [] })])).toMatch(/^No traces matched\./);
     expect(summarizeTrace([])).toMatch(/^Trace not found/);
     expect(summarizeTrace([createDataFrame({ fields: [] })])).toMatch(/^Trace not found/);
+    expect(summarizeProfile([])).toMatch(/^No profile data\. Check the profile type and labels/);
+    // what Pyroscope's datasource returns for an empty profile
+    const empty = createDataFrame({
+      name: 'response',
+      fields: ['level', 'value', 'self', 'label'].map((name) => ({ name, values: [] })),
+    });
+    expect(summarizeProfile([empty])).toMatch(/^No profile data\./);
   });
 
   it('skips null and NaN samples and sorts series without any value last', () => {
@@ -198,5 +212,76 @@ describe('summarize', () => {
     const out = summarizeTrace([frame]);
     expect(out).toContain('Most self time: mysql "SELECT" self=90ms');
     expect(out).toContain('Error spans: mysql "SELECT": deadlock');
+    expect(out).not.toContain('profile');
+  });
+
+  it('lists the spans that have a CPU profile, slowest first', () => {
+    const frame = spans([
+      ['root', '', 'api', 'GET /', 100],
+      ['fast', 'root', 'auth', 'Check', 5],
+      ['slow', 'root', 'pricing', 'Quote', 80],
+    ]);
+    frame.fields.push({
+      name: 'tags',
+      type: FieldType.other,
+      config: {},
+      values: [
+        [{ key: 'http.method', value: 'GET' }],
+        [{ key: 'pyroscope.profile.id', value: 'fast' }],
+        [
+          { key: 'pyroscope.profile.id', value: 'slow' },
+          { key: 'pyroscope.profile.name', value: 'Quote' },
+        ],
+      ],
+    });
+    expect(summarizeTrace([frame]).split('\n').pop()).toBe(
+      'Spans with a CPU profile (their profile id goes in query_profile spanIds), slowest first: ' +
+        'pricing "Quote" 80ms profile=slow; auth "Check" 5ms profile=fast'
+    );
+  });
+
+  it('names the functions with the most self and total value of a profile, counting recursion once', () => {
+    // Pyroscope's flame graph frame: the tree depth first, labels as an enum
+    const tree: Array<[level: number, value: number, self: number, label: number]> = [
+      [0, 100, 0, 0], // total
+      [1, 100, 0, 1], //   main.main
+      [2, 70, 10, 2], //     main.handle
+      [3, 40, 40, 3], //       encoding/json.Marshal
+      [3, 20, 5, 2], //        main.handle (recursive)
+      [4, 15, 15, 4], //         runtime.mallocgc
+      [2, 30, 30, 4], //     runtime.mallocgc
+    ];
+    const ms = 10_000_000;
+    const frame = createDataFrame({
+      name: 'response',
+      meta: { preferredVisualisationType: 'flamegraph' },
+      fields: [
+        { name: 'level', type: FieldType.number, values: tree.map((r) => r[0]) },
+        { name: 'value', type: FieldType.number, values: tree.map((r) => r[1] * ms), config: { unit: 'ns' } },
+        { name: 'self', type: FieldType.number, values: tree.map((r) => r[2] * ms), config: { unit: 'ns' } },
+        {
+          name: 'label',
+          type: FieldType.enum,
+          values: tree.map((r) => r[3]),
+          config: {
+            type: {
+              enum: { text: ['total', 'main.main', 'main.handle', 'encoding/json.Marshal', 'runtime.mallocgc'] },
+            },
+          },
+        },
+      ],
+    });
+    expect(summarizeProfile([frame]).split('\n')).toEqual([
+      'Total 1 s over the time range.',
+      'Most self (spent in the function itself):',
+      '450 ms (45%) runtime.mallocgc',
+      '400 ms (40%) encoding/json.Marshal',
+      '150 ms (15%) main.handle',
+      'Most total (including the functions it calls):',
+      '1 s (100%) main.main',
+      '700 ms (70%) main.handle',
+      '450 ms (45%) runtime.mallocgc',
+      '400 ms (40%) encoding/json.Marshal',
+    ]);
   });
 });

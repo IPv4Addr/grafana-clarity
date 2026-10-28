@@ -28,6 +28,7 @@ const OPTIONS: Record<ToolView['panel'], object> = {
   },
   table: { showHeader: true, cellHeight: 'sm' },
   traces: {},
+  flamegraph: {},
 };
 
 type ToolItem = Extract<Item, { kind: 'tool' }>;

@@ -24,6 +24,7 @@ describe('context', () => {
         'datasources:',
         '- loki "Loki" uid=loki',
         '- prometheus "Prometheus" uid=prometheus (default)',
+        '- grafana-pyroscope-datasource "Pyroscope" uid=pyroscope',
         '- tempo "Tempo" uid=tempo serviceMapPrometheusUid=prometheus logsLokiUid=loki',
         '- tempo "Tempo EU" uid=tempo-eu serviceMapPrometheusUid=- logsLokiUid=-',
       ].join('\n')

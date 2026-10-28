@@ -84,6 +84,8 @@ for (const provider of Object.keys(PROVIDERS) as Provider[]) {
     // the mock echoes the first line of every tool result
     await expect(answer).toContainText('Values of service_name:');
     await expect(answer).toContainText(/\d+ spans\. Root:/);
+    await expect(answer).toContainText(/Profile types: \d+ values: .*process_cpu:cpu:nanoseconds:cpu:nanoseconds/);
+    await expect(page.getByTestId('flameGraph')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Explore' }).first()).toBeVisible();
     // alert rules from Prometheus' own ruler show up next to the Grafana-managed ones
     await expect(page.getByRole('gridcell', { name: 'HotRODRedisErrors' })).toBeVisible();
@@ -115,7 +117,7 @@ for (const provider of Object.keys(PROVIDERS) as Provider[]) {
       'system',
       'user',
       'assistant',
-      ...Array(8).fill('tool'),
+      ...Array(10).fill('tool'),
       'assistant',
       ...Array(3).fill('tool'), // the mock opens the three slowest traces
     ]);
