@@ -1,4 +1,4 @@
-# Dev environment for Clarity: Grafana 13.2.2 with the plugin mounted from ./dist and Grafana's LLM app, plus
+# Dev environment for Clarity: Grafana 13.3.0 with the plugin mounted from ./dist and Grafana's LLM app, plus
 # Prometheus, Loki and Tempo filled by the HotROD demo app (4 services) so there is something to ask questions about,
 # and Pyroscope with CPU and memory profiles of Prometheus, Loki, Tempo and Alloy (HotROD has no pprof endpoints).
 #   npm run build && docker compose up -d   ->   set up the provider, key and models in the LLM app at
@@ -15,7 +15,7 @@ services:
     build:
       args:
         grafana_image: ${GRAFANA_IMAGE:-grafana}
-        grafana_version: ${GRAFANA_VERSION:-13.2.2}
+        grafana_version: ${GRAFANA_VERSION:-13.3.0}
     # .config/ was generated for the plugin's earlier id: container name, plugin mount and log filter use the current one
     container_name: clarity-grafana
     ports: !override
@@ -27,7 +27,7 @@ services:
     environment:
       GF_LOG_FILTERS: plugin.ipv4addr-clarity-app:debug
       GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: ipv4addr-clarity-app
-      GF_PLUGINS_PREINSTALL_SYNC: grafana-llm-app@1.1.0 # model access: Clarity calls the LLM through Grafana's LLM app
+      GF_PLUGINS_PREINSTALL_SYNC: grafana-llm-app@1.2.0 # model access: Clarity calls the LLM through Grafana's LLM app
       GF_DATAPROXY_LOGGING: 0 # data proxy request logging; prompts go through the LLM app (logged there only at debug)
       GF_SERVER_ENFORCE_DOMAIN: 'true' # anonymous admin + a real key: refuse foreign Host headers (DNS rebinding)
     extra_hosts: ['host.docker.internal:host-gateway'] # an Ollama running on the host (Linux; Docker Desktop has it)
@@ -44,10 +44,10 @@ services:
       - { source: prometheus-rules, target: /etc/prometheus/rules.yml }
 
   loki:
-    image: grafana/loki:3.7.8
+    image: grafana/loki:3.7.9
 
   tempo:
-    image: grafana/tempo:2.8.2
+    image: grafana/tempo:3.1.1
     command: [-config.file=/etc/tempo.yaml]
     configs: [{ source: tempo, target: /etc/tempo.yaml }]
 
@@ -55,7 +55,7 @@ services:
     image: grafana/pyroscope:2.4.2
 
   alloy: # ships the containers' logs to Loki and the Go services' pprof profiles to Pyroscope
-    image: grafana/alloy:v1.12.1
+    image: grafana/alloy:v1.21.2
     command: [run, /etc/alloy/config.alloy]
     configs: [{ source: alloy, target: /etc/alloy/config.alloy }]
     volumes: [/var/run/docker.sock:/var/run/docker.sock:ro]
@@ -83,7 +83,7 @@ services:
 
   mock-llm:
     profiles: [e2e]
-    image: node:22-alpine
+    image: node:24-alpine
     command: [node, /mock.mjs]
     volumes: [./tests/mock-llm.mjs:/mock.mjs:ro]
     ports: [127.0.0.1:3099:8080]
@@ -124,9 +124,8 @@ configs:
         storage:
           path: /var/tempo/generator/wal
           remote_write: [{ url: 'http://prometheus:9090/api/v1/write', send_exemplars: true }]
-        traces_storage: { path: /var/tempo/generator/traces }
-      overrides:
-        defaults: { metrics_generator: { processors: [service-graphs, span-metrics, local-blocks] } }
+      overrides: # TraceQL metrics need no local-blocks processor since Tempo 3: the live-store serves them
+        defaults: { metrics_generator: { processors: [service-graphs, span-metrics] } }
   alloy:
     content: |
       discovery.docker "c" { host = "unix:///var/run/docker.sock" }

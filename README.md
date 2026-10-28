@@ -85,7 +85,7 @@ Not there yet, and in no particular order:
 ```bash
 npm install
 npm run build
-docker compose up -d        # Grafana 13.2 with Clarity, the LLM app and a HotROD demo on Prometheus, Loki and Tempo, plus Pyroscope
+docker compose up -d        # Grafana 13.3 with Clarity, the LLM app and a HotROD demo on Prometheus, Loki and Tempo, plus Pyroscope
 ```
 
 Then set up the LLM app at http://localhost:3000/plugins/grafana-llm-app. Add `--profile ollama` for a local model (`docker compose exec ollama ollama pull qwen3`, then Custom API `http://ollama:11434`).
