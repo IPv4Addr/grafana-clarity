@@ -35,7 +35,6 @@ type Settings = DataSourceInstanceSettings<DataSourceJsonData & Record<string, u
 
 /** A datasource as getDataSourceSrv() returns it. Only uid and type are required; name defaults to the uid. */
 export const fakeDatasource = (ds: Pick<Settings, 'uid' | 'type'> & Partial<Settings>): DataSourceInstanceSettings => ({
-  id: 1,
   name: ds.uid,
   access: 'proxy',
   readOnly: false,
@@ -113,7 +112,11 @@ const liveSrv = {
 const hasPermission = fake((_action: string) => true);
 
 /** Points window.location at another URL without navigating. */
-export const setLocation = (url: string) => (globalThis as unknown as { jsdom: JSDOM }).jsdom.reconfigure({ url });
+export const setLocation = (url: string) => {
+  (globalThis as unknown as { jsdom: JSDOM }).jsdom.reconfigure({ url });
+  // jsdom keeps document.baseURI cached through reconfigure(); a history update refreshes it, as in a browser
+  window.history.replaceState(window.history.state, '', url);
+};
 
 // reads the jsdom location, which setLocation() sets; no test navigates
 const locationService = {

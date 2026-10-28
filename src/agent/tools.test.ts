@@ -222,6 +222,8 @@ describe('datasource queries', () => {
     ],
     [
       'a refused request',
+      // a refused request comes only in the deprecated `error`
+      // eslint-disable-next-line @typescript-eslint/no-deprecated
       () => failed({ error: { message: 'Access denied to datasource', status: 403 } }),
       'Access denied to datasource',
     ],
