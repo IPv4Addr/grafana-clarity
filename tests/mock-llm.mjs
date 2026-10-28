@@ -44,6 +44,21 @@ const TURN_1 = [
   ],
   ['list_loki_labels', { datasourceUid: 'loki', label: 'service_name', start: 'now-1h', end: 'now' }],
   [
+    'list_pyroscope_labels',
+    { datasourceUid: 'pyroscope', match: '{service_name="tempo"}', start: 'now-1h', end: 'now' },
+  ],
+  [
+    'query_profile',
+    {
+      datasourceUid: 'pyroscope',
+      profileType: 'process_cpu:cpu:nanoseconds:cpu:nanoseconds',
+      labelSelector: '{service_name="tempo"}',
+      start: 'now-15m',
+      end: 'now',
+    },
+  ],
+  // last: turn 2 opens the traces it found
+  [
     'search_traces',
     {
       datasourceUid: 'tempo',

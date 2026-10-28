@@ -64,6 +64,7 @@ const defaultDatasources = () => [
       tracesToLogsV2: { datasourceUid: 'loki', filterByTraceID: true },
     },
   }),
+  fakeDatasource({ uid: 'pyroscope', name: 'Pyroscope', type: 'grafana-pyroscope-datasource' }),
 ];
 const datasources: DataSourceInstanceSettings[] = [];
 
