@@ -1,4 +1,4 @@
-import { DataFrame, Field, FieldType, Labels } from '@grafana/data';
+import { DataFrame, Field, FieldType, Labels, formattedValueToString, getValueFormat } from '@grafana/data';
 
 // Turns query results into compact text for the model. The full frames stay in the browser for the panels;
 // sending raw samples would cost 100K+ tokens per query.
@@ -198,6 +198,10 @@ export const summarizeTrace = (frames: DataFrame[]): string => {
     dur: Number(get('duration', i)),
     error: Number(get('statusCode', i)) === 2,
     msg: String(get('statusMessage', i) ?? ''),
+    // set by Pyroscope's span profiling (otel-profiling-go and the like), on the spans it has a CPU profile of
+    profile: (get('tags', i) as Array<{ key: string; value: unknown }> | undefined)?.find(
+      (t) => t.key === 'pyroscope.profile.id'
+    )?.value,
   }));
   // self time = duration minus the covered part of direct children (children may overlap; clamp at 0)
   const childTime = new Map<string, number>();
@@ -216,6 +220,7 @@ export const summarizeTrace = (frames: DataFrame[]): string => {
     .map((s) => ({ ...s, self: Math.max(0, s.dur - (childTime.get(s.id) ?? 0)) }))
     .sort((a, b) => b.self - a.self);
   const errors = spans.filter((s) => s.error);
+  const profiled = spans.filter((s) => s.profile).sort((a, b) => b.dur - a.dur);
   return cap([
     `${spans.length} spans. Root: ${root.service} "${root.op}" ${sig(root.dur)}ms starting ${iso(root.start)}`,
     `Services: ${[...perService].map(([k, v]) => `${k} (${v.spans} spans${v.errors ? `, ${v.errors} errors` : ''})`).join('; ')}`,
@@ -229,5 +234,63 @@ export const summarizeTrace = (frames: DataFrame[]): string => {
           .map((s) => `${s.service} "${s.op}"${s.msg ? `: ${s.msg}` : ''}`)
           .join('; ')}`
       : 'No error spans.',
+    ...(profiled.length
+      ? [
+          `Spans with a CPU profile (their profile id goes in query_profile spanIds), slowest first: ${profiled
+            .slice(0, 10)
+            .map((s) => `${s.service} "${s.op}" ${sig(s.dur)}ms profile=${s.profile}`)
+            .join('; ')}`,
+        ]
+      : []),
+  ]);
+};
+
+/**
+ * Pyroscope's flame graph frame ("response"): the profile tree in depth-first order, one row per node with its
+ * level, total value (including callees) and self value. Gives the total and the top functions by self and by total.
+ */
+export const summarizeProfile = (frames: DataFrame[], top = 15): string => {
+  const f = frames.find((x) => col(x, 'level') && col(x, 'self'));
+  const value = f && col(f, 'value');
+  const total = Number(value?.values[0] ?? 0);
+  if (!f || !value || !total) {
+    return 'No profile data. Check the profile type and labels with list_pyroscope_labels (service_name lists the profiled services) and the time range.';
+  }
+  const levels = col(f, 'level')!.values as number[];
+  const self = col(f, 'self')!.values as number[];
+  // an enum field (indexes into config.type.enum.text), or plain strings
+  const label = col(f, 'label')!;
+  const names = label.config.type?.enum?.text;
+  const fmt = getValueFormat(value.config.unit ?? 'short');
+  const amount = (v: number) => `${formattedValueToString(fmt(v))} (${Number(((v / total) * 100).toFixed(1))}%)`;
+
+  const byFunction = new Map<string, { self: number; total: number }>();
+  const stack: string[] = [];
+  // the root ("total") is the whole profile, not a function
+  for (let i = 1; i < f.length; i++) {
+    const name = String(names?.[label.values[i]] ?? label.values[i]);
+    stack.length = levels[i] - 1; // the ancestors below the root
+    const fn = byFunction.get(name) ?? { self: 0, total: 0 };
+    fn.self += self[i];
+    // a recursive function counts once per stack, at its outermost call
+    if (!stack.includes(name)) {
+      fn.total += Number(value.values[i]);
+    }
+    stack.push(name);
+    byFunction.set(name, fn);
+  }
+  const fns = [...byFunction];
+  const list = (key: 'self' | 'total') =>
+    fns
+      .filter(([, v]) => v[key] > 0)
+      .sort((a, b) => b[1][key] - a[1][key])
+      .slice(0, top)
+      .map(([name, v]) => `${amount(v[key])} ${name}`);
+  return cap([
+    `Total ${formattedValueToString(fmt(total))} over the time range.`,
+    'Most self (spent in the function itself):',
+    ...list('self'),
+    'Most total (including the functions it calls):',
+    ...list('total'),
   ]);
 };

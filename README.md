@@ -6,17 +6,17 @@
 
 <p align="center"><em>A question goes in, a spectrum of metrics, logs and traces comes out.<br>There is no dark side of your stack, really. Matter of fact, it's all queryable.</em></p>
 
-Ask Grafana things like "is payments running?", "which traces are slow?" or "why is this alert firing?". Clarity has the model write and run the PromQL, LogQL and TraceQL, read the alerts and follow the trail across services, then answers. Every query it runs is shown next to the answer as a Grafana panel with an **Explore** link.
+Ask Grafana things like "is payments running?", "which traces are slow?", "why is this alert firing?" or "what is using the CPU of checkout?". Clarity has the model write and run the PromQL, LogQL and TraceQL, read the alerts and profiles and follow the trail across services, then answers. Every query it runs is shown next to the answer as a Grafana panel with an **Explore** link.
 
 ## Clarity or Grafana Assistant?
 
-If you use Grafana Cloud, use [Grafana Assistant](https://grafana.com/docs/grafana-cloud/platform/grafana-assistant/): Grafana Labs' own assistant. It runs in Grafana Cloud, and a self-managed Grafana can only use it by connecting to a Grafana Cloud backend. Clarity is for when that is not an option: it runs entirely inside your own Grafana, needs no Grafana Cloud account, queries your own Prometheus, Loki and Tempo with each user's permissions, and uses the model you set up, including a local one through Ollama, so nothing has to leave your network.
+If you use Grafana Cloud, use [Grafana Assistant](https://grafana.com/docs/grafana-cloud/platform/grafana-assistant/): Grafana Labs' own assistant. It runs in Grafana Cloud, and a self-managed Grafana can only use it by connecting to a Grafana Cloud backend. Clarity is for when that is not an option: it runs entirely inside your own Grafana, needs no Grafana Cloud account, queries your own Prometheus, Loki, Tempo and Pyroscope with each user's permissions, and uses the model you set up, including a local one through Ollama, so nothing has to leave your network.
 
 ## Requirements
 
 - Grafana 13.2 or later (OSS or Enterprise).
 - [Grafana's LLM app](https://grafana.com/grafana/plugins/grafana-llm-app/) (`grafana-llm-app`), set up with a model that supports tool calling. Clarity has no model settings of its own: it uses the LLM app, which keeps the API key on the Grafana server.
-- Prometheus/Mimir, Loki and/or Tempo datasources to ask about.
+- Prometheus/Mimir, Loki, Tempo and/or Pyroscope datasources to ask about. The profile of a single trace span needs [span profiles](https://grafana.com/docs/pyroscope/latest/configure-client/trace-span-profiles/) in the service.
 
 ## Install
 
@@ -71,7 +71,6 @@ Open the LLM app (`/plugins/grafana-llm-app`), choose the provider, enter the UR
 
 Not there yet, and in no particular order:
 
-- **Profiling:** Pyroscope. The model picks the profile type and labels, finds the functions that use the most CPU or memory, and shows them as a Grafana flame graph. From a slow trace span it can go on to that span's profile.
 - **More datasources:**
   - logs: Elasticsearch and OpenSearch
   - metrics: InfluxDB and Graphite
@@ -86,7 +85,7 @@ Not there yet, and in no particular order:
 ```bash
 npm install
 npm run build
-docker compose up -d        # Grafana 13.2 with Clarity, the LLM app and a HotROD demo on Prometheus, Loki and Tempo
+docker compose up -d        # Grafana 13.2 with Clarity, the LLM app and a HotROD demo on Prometheus, Loki and Tempo, plus Pyroscope
 ```
 
 Then set up the LLM app at http://localhost:3000/plugins/grafana-llm-app. Add `--profile ollama` for a local model (`docker compose exec ollama ollama pull qwen3`, then Custom API `http://ollama:11434`).
