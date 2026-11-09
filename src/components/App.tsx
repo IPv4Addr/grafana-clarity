@@ -4,7 +4,7 @@ import { GrafanaTheme2, PageLayoutType } from '@grafana/data';
 import { PluginPage, locationService } from '@grafana/runtime';
 import { Button, ClipboardButton, useStyles2 } from '@grafana/ui';
 import pluginJson from '../plugin.json';
-import { chat, transcript, useChat } from '../agent/store';
+import { chat, readShared, shareLink, transcript, useChat } from '../agent/store';
 import { Chat, ChatProps } from './Chat';
 import { Logo } from './Logo';
 
@@ -24,6 +24,25 @@ const App = () => {
       locationService.replace(`/a/${pluginJson.id}`); // drops ?q= and the state: a reload must not ask it again
     }
   }, [link]);
+  // a share link (see shareLink): its conversation replaces this one
+  useEffect(() => {
+    const shared = locationService.getLocation().hash.match(/^#share=([\w-]+)$/)?.[1];
+    if (shared) {
+      locationService.replace(`/a/${pluginJson.id}`);
+      readShared(shared).then(chat.load, () =>
+        chat.load([{ kind: 'error', text: 'This share link is incomplete or damaged; ask for it again.' }])
+      );
+    }
+  }, []);
+  // built ahead, as ClipboardButton needs the text right away; not while an answer streams in, and only used for
+  // the items it was built from
+  const [share, setShare] = useState<{ items: typeof items; url: string }>();
+  useEffect(() => {
+    if (!busy && items.length) {
+      shareLink(items).then((url) => setShare({ items, url }));
+    }
+  }, [items, busy]);
+  const shareUrl = share?.items === items ? share.url : undefined;
   // Custom layout and out of flow: Grafana's page containers grow with their content, so the chat gets a
   // fixed height (and its own scroller) only when it does not take part in their sizing
   return (
@@ -36,6 +55,15 @@ const App = () => {
           </h2>
           <ClipboardButton icon="copy" variant="secondary" getText={() => transcript(items)} disabled={!items.length}>
             Copy as Markdown
+          </ClipboardButton>
+          <ClipboardButton
+            icon="share-alt"
+            variant="secondary"
+            getText={() => shareUrl ?? ''}
+            disabled={!shareUrl}
+            tooltip="A link that opens this conversation in Clarity, for anyone in this Grafana. The queries and what the assistant saw come along, not the charts."
+          >
+            Copy share link
           </ClipboardButton>
           <Button icon="plus" variant="secondary" onClick={chat.reset}>
             New conversation
