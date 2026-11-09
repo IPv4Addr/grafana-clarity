@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from 'react';
+import { getDefaultTimeRange } from '@grafana/data';
+import pluginJson from '../plugin.json';
 import { Message, ask, friendlyError } from './llm';
-import { RESUME } from './prompt';
+import { RESUME, SYSTEM } from './prompt';
 import { ToolOutcome, describeCall } from './tools';
 
 // One conversation per browser tab, kept outside React so it survives going to Explore or a dashboard and back.
@@ -120,6 +122,17 @@ export class ChatStore {
     this.set(() => ({ items: [], busy: false, resumable: false }));
   };
 
+  /** Opens a shared conversation (see shareLink) in place of this one; follow-up questions build on it. */
+  load = (items: Item[]) => {
+    this.reset();
+    this.history = [
+      { role: 'system', content: SYSTEM },
+      { role: 'user', content: `A colleague shared this conversation with me:\n\n${transcript(items)}` },
+      { role: 'assistant', content: 'I have read the shared conversation.' },
+    ];
+    this.set(() => ({ items }));
+  };
+
   private set(update: (s: State) => Partial<State>) {
     this.state = { ...this.state, ...update(this.state) };
     // One React update per task, not per streamed token: a burst of tiny chunks otherwise chains synchronous
@@ -209,3 +222,66 @@ export const transcript = (items: Item[]): string =>
     })
     .filter(Boolean)
     .join('\n\n');
+
+const sameOrigin = (href: unknown): href is string =>
+  typeof href === 'string' &&
+  URL.canParse(href, document.baseURI) &&
+  new URL(href, document.baseURI).origin === new URL(document.baseURI).origin;
+
+const TEXT_KINDS = ['user', 'assistant', 'progress', 'error', 'usage'];
+
+/**
+ * An item as it goes into a share link and comes back out of one: only known fields, as anyone can craft a link
+ * (so only same-origin Explore links). The frames stay behind, too big for a URL: a shared tool call shows its
+ * query, what the model saw and the Explore link.
+ */
+const forShare = (i: Item): Item | undefined => {
+  const str = (v: unknown) => String(v ?? '');
+  if (!i || typeof i !== 'object') {
+    return undefined;
+  }
+  if (i.kind === 'tool') {
+    const explore = i.result?.view?.explore;
+    return {
+      kind: 'tool',
+      id: str(i.id),
+      name: str(i.name),
+      input: i.input && typeof i.input === 'object' ? i.input : {},
+      ...(i.result && {
+        result: {
+          forModel: str(i.result.forModel),
+          ...(sameOrigin(explore) && {
+            view: { panel: 'table', frames: [], timeRange: getDefaultTimeRange(), height: 0, explore },
+          }),
+        },
+      }),
+      ...(i.error !== undefined && { error: str(i.error) }),
+    };
+  }
+  return TEXT_KINDS.includes(i.kind)
+    ? { kind: i.kind, text: str(i.text), ...(i.interrupted && { interrupted: true }), ...(i.info && { info: true }) }
+    : undefined;
+};
+
+const through = (data: BodyInit, transform: GenericTransformStream) =>
+  new Response(new Response(data).body!.pipeThrough(transform));
+
+/** A link that opens this conversation in Clarity: deflated JSON in the #fragment, which never reaches a server. */
+export const shareLink = async (items: Item[]): Promise<string> => {
+  const json = JSON.stringify(items.flatMap((i) => forShare(i) ?? []));
+  const bytes = new Uint8Array(await through(json, new CompressionStream('deflate-raw')).arrayBuffer());
+  const b64 = btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
+  const fragment = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return new URL(`a/${pluginJson.id}#share=${fragment}`, document.baseURI).href;
+};
+
+/** The conversation in a shareLink fragment. Rejects a damaged one. */
+export const readShared = async (fragment: string): Promise<Item[]> => {
+  const bin = atob(fragment.replace(/-/g, '+').replace(/_/g, '/'));
+  const zipped = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  const items: unknown = JSON.parse(await through(zipped, new DecompressionStream('deflate-raw')).text());
+  if (!Array.isArray(items)) {
+    throw new Error('not a conversation');
+  }
+  return items.flatMap((i) => forShare(i) ?? []);
+};

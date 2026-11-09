@@ -1,6 +1,6 @@
 {
   "name": "clarity",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "On-prem AI assistant for Grafana: ask about metrics, logs, traces and alerts with OpenAI, Anthropic, Ollama or OpenRouter.",
   "repository": {
     "type": "git",

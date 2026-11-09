@@ -1,6 +1,6 @@
 import { CUT_OFF, ask } from './llm';
 import { RESUME } from './prompt';
-import { ChatStore, splitFollowUps, transcript } from './store';
+import { ChatStore, Item, readShared, shareLink, splitFollowUps, transcript } from './store';
 
 /** A store that runs `run` instead of asking the model. */
 const setup = (run: typeof ask) => {
@@ -372,5 +372,73 @@ describe('transcript', () => {
 
   it('is empty for an empty chat', () => {
     expect(transcript([])).toBe('');
+  });
+});
+
+describe('share links', () => {
+  const fragment = (url: string) => new URL(url).hash.replace('#share=', '');
+
+  it('round-trips the conversation without the frames', async () => {
+    const tool: Item = {
+      kind: 'tool',
+      id: 't1',
+      name: 'query_prometheus',
+      input: { expr: 'up{job="payments"}' },
+      result: {
+        forModel: 'up = 1',
+        view: { panel: 'timeseries', frames: [], timeRange: {} as any, height: 220, explore: '/explore?x=1' },
+      },
+    };
+    const items: Item[] = [
+      { kind: 'user', text: 'Is payments up?' },
+      tool,
+      { kind: 'assistant', text: 'Payments is up.', interrupted: true },
+    ];
+    const url = await shareLink(items);
+    expect(url).toMatch(/\/a\/ipv4addr-clarity-app#share=[\w-]+$/);
+    const back = await readShared(fragment(url));
+    expect(back[0]).toEqual(items[0]);
+    expect(back[2]).toEqual(items[2]);
+    expect(back[1]).toMatchObject({
+      kind: 'tool',
+      input: { expr: 'up{job="payments"}' },
+      result: { forModel: 'up = 1', view: { frames: [], explore: '/explore?x=1' } },
+    });
+  });
+
+  it('keeps only known fields and same-origin links from a crafted link', async () => {
+    const crafted = [
+      { kind: 'user', text: 'hi', extra: '<img>' },
+      {
+        kind: 'tool',
+        id: 1,
+        name: 'x',
+        input: 'nope',
+        result: { forModel: 'r', view: { explore: 'javascript:alert(1)' } },
+      },
+      { kind: 'script', text: 'x' },
+      null,
+    ] as unknown as Item[];
+    expect(await readShared(fragment(await shareLink(crafted)))).toEqual([
+      { kind: 'user', text: 'hi' },
+      { kind: 'tool', id: '1', name: 'x', input: {}, result: { forModel: 'r' } },
+    ]);
+  });
+
+  it('rejects a damaged link', async () => {
+    await expect(readShared('bm90IGRlZmxhdGU')).rejects.toThrow();
+  });
+
+  it('loads a shared conversation for follow-ups', async () => {
+    const { store, ask } = setup(async () => undefined);
+    store.load([
+      { kind: 'user', text: 'Is payments up?' },
+      { kind: 'assistant', text: 'Yes.' },
+    ]);
+    expect(store.getSnapshot().items).toHaveLength(2);
+    await store.send('Since when?');
+    const history = ask.mock.calls[0][0];
+    expect(history.map((m) => m.role)).toEqual(['system', 'user', 'assistant']);
+    expect(history[1].content).toContain('## Is payments up?\n\nYes.');
   });
 });
