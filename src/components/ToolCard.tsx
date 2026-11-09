@@ -66,7 +66,8 @@ export const ToolCard = ({ item }: { item: ToolItem }) => {
             {item.error}
           </div>
         )}
-        {view && <Panel view={view} title={title} />}
+        {/* a shared conversation has no frames (see shareLink) */}
+        {view && view.frames.length > 0 && <Panel view={view} title={title} />}
         {item.result && (
           <details className={s.details}>
             <summary>What the assistant saw</summary>
